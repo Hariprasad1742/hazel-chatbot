@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 
+const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY ?? "";
+
 // --- TypeScript Interfaces ---
 interface IMessage {
     id: number;
@@ -50,7 +52,7 @@ const BotAvatar: React.FC = () => (
 );
 
 // Main Application Component
-export default function App(): JSX.Element {
+export default function App(): React.ReactElement {
     const [chatStarted, setChatStarted] = useState<boolean>(false);
     const [messages, setMessages] = useState<IMessage[]>([]);
     const [answers, setAnswers] = useState<string[]>([]);
@@ -58,6 +60,8 @@ export default function App(): JSX.Element {
     const [isTyping, setIsTyping] = useState<boolean>(false);
     const [isLoadingAiResponse, setIsLoadingAiResponse] = useState<boolean>(false);
     const [quizFinished, setQuizFinished] = useState<boolean>(false);
+    const [freeChatEnabled, setFreeChatEnabled] = useState<boolean>(false);
+    const [inputValue, setInputValue] = useState<string>("");
     const chatEndRef = useRef<HTMLDivElement>(null);
 
     // Effect to scroll to the bottom of the chat on new messages
@@ -90,8 +94,7 @@ export default function App(): JSX.Element {
         Please provide a concise, single-paragraph summary of advice. Use Google Search to find relevant, up-to-date resources like articles, support groups, or professional organizations that could help. Frame your response in a caring and encouraging tone.`;
 
         const userQuery = `Based on my situation (${answers.join(', ')}), what advice and resources can you offer?`;
-        const apiKey = ""; // API key will be injected by the environment
-        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${GEMINI_API_KEY}`;
 
         const payload = {
             contents: [{ parts: [{ text: userQuery }] }],
@@ -133,6 +136,54 @@ export default function App(): JSX.Element {
                 id: Date.now(),
                 sender: 'bot',
                 text: "I'm sorry, I couldn't connect to my support resources right now. Please check your connection and try again."
+            };
+            setMessages(prev => [...prev, errorMessage]);
+        } finally {
+            setIsLoadingAiResponse(false);
+            setFreeChatEnabled(true); // Enable free-form chat after first AI advice
+        }
+    };
+
+    const sendFreeChat = async (): Promise<void> => {
+        const userText = inputValue.trim();
+        if (!userText || isLoadingAiResponse) return;
+
+        const userMessage: IMessage = { id: Date.now(), sender: 'user', text: userText };
+        setMessages(prev => [...prev, userMessage]);
+        setInputValue("");
+
+        const systemPrompt = `You are Hazel, a compassionate and helpful family support assistant. Be empathetic and practical.`;
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${GEMINI_API_KEY}`;
+
+        const payload = {
+            contents: [{ parts: [{ text: userText }] }],
+            systemInstruction: { parts: [{ text: systemPrompt }] }
+        };
+
+        try {
+            setIsLoadingAiResponse(true);
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!response.ok) {
+                throw new Error(`API call failed with status: ${response.status}`);
+            }
+            const result = await response.json();
+            const candidate = result.candidates?.[0];
+            let aiText = "I'm sorry, I couldn't process that message right now.";
+            if (candidate && candidate.content?.parts?.[0]?.text) {
+                aiText = candidate.content.parts[0].text;
+            }
+            const aiMessage: IMessage = { id: Date.now(), sender: 'bot', text: aiText };
+            setMessages(prev => [...prev, aiMessage]);
+        } catch (error) {
+            console.error("Gemini free chat failed:", error);
+            const errorMessage: IMessage = {
+                id: Date.now(),
+                sender: 'bot',
+                text: "I couldn't reach my support resources. Please try again."
             };
             setMessages(prev => [...prev, errorMessage]);
         } finally {
@@ -242,7 +293,7 @@ export default function App(): JSX.Element {
                             <div ref={chatEndRef} />
                         </div>
 
-                        {/* Options Area */}
+                        {/* Options Area and Free Chat Input */}
                         <div className="p-4 border-t bg-slate-50 rounded-b-2xl">
                             <div className="flex flex-wrap justify-center gap-2">
                                 {currentOptions.map((option, i) => (
@@ -263,6 +314,27 @@ export default function App(): JSX.Element {
                                     </button>
                                 )}
                             </div>
+                            {freeChatEnabled && (
+                                <div className="mt-3">
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="text"
+                                            value={inputValue}
+                                            onChange={(e) => setInputValue(e.target.value)}
+                                            onKeyDown={(e) => { if (e.key === 'Enter') sendFreeChat(); }}
+                                            placeholder="Message Hazel..."
+                                            className="flex-1 border border-slate-300 rounded-full px-4 py-2 focus:outline-none focus:ring-2 focus:ring-purple-400"
+                                        />
+                                        <button
+                                            onClick={sendFreeChat}
+                                            disabled={isLoadingAiResponse}
+                                            className="bg-purple-600 text-white font-semibold px-5 py-2 rounded-full hover:bg-purple-700 disabled:opacity-60"
+                                        >
+                                            Send
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </>
                 )}
